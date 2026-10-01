@@ -1,0 +1,26 @@
+{
+  "name": "url-migration-workbench",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "start": "node server/src/index.js",
+    "dev:server": "node --watch server/src/index.js",
+    "dev:web": "npm --workspace web run dev",
+    "migrate": "node server/src/migrate.js",
+    "seed": "node server/src/seed.js",
+    "verify": "node server/src/verify-cli.js",
+    "pg:start": "node scripts/start-pg.js",
+    "pg:stop": "node scripts/start-pg.js stop",
+    "test": "node --test server/test/"
+  },
+  "dependencies": {
+    "@fastify/static": "^10.1.5",
+    "fastify": "^5.12.5",
+    "pg": "^8.23.0"
+  }
+}
