@@ -22,15 +22,19 @@ export function buildFixtureApp() {
   // 新站正文页
   const newPages = new Set([
     '/articles/tech/42',
+    '/articles/tech/77',
     '/articles/123',
     '/sections/weekly',
+    '/sections/monday',
     '/files%2Fdraft',
     '/chain/7',
   ]);
   const pageTitles = {
     '/articles/tech/42': '科技频道文章 42',
+    '/articles/tech/77': '科技频道文章 77（批量导入新增）',
     '/articles/123': '文章 123（小写 /news 迁入）',
     '/sections/weekly': '周刊栏目',
+    '/sections/monday': '周一栏目（尾斜杠旧址迁入）',
     '/files%2Fdraft': '文件名中带斜杠字符的草稿页（编码斜杠是合法文件名）',
     '/chain/7': '长链终点页',
   };
@@ -42,8 +46,10 @@ export function buildFixtureApp() {
    */
   const redirects = new Map([
     ['/%E9%A2%91%E9%81%93/%E7%A7%91%E6%8A%80/42.html', '/articles/tech/42'],
+    ['/%E9%A2%91%E9%81%93/%E7%A7%91%E6%8A%80/77.html', '/articles/tech/77'],
     ['/news/123', '/articles/123'],
     ['/column/weekly/', '/sections/weekly'],
+    ['/column/monday/', '/sections/monday'],
     ['/old-files%2Fdraft', '/files%2Fdraft'],
     // 修复模式：长链改直跳、环打断；默认模式保留缺陷
     ...(fixed
@@ -65,7 +71,7 @@ export function buildFixtureApp() {
   ]);
 
   /** 已删除栏目：永久消失，正确状态是 410 Gone（不是 301 到首页） */
-  const gone = new Set(['/forum/announce/9']);
+  const gone = new Set(['/forum/announce/9', '/forum/announce/8']);
 
   function send(res, status, body, extraHeaders = {}) {
     const payload = Buffer.from(body, 'utf8');

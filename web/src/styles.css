@@ -88,3 +88,5 @@ pre.evidence {
 }
 .callout.bad { border-color: var(--bad); }
 .callout.ok { border-color: var(--ok); }
+tr.rowActive { background: rgba(77,163,255,.08); }
+input[type="file"] { padding: 6px 8px; }

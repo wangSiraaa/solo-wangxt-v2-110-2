@@ -12,6 +12,8 @@ import { normalize } from './normalize.js';
 export function analyzeInputs(inputs) {
   const groups = new Map();
   for (const row of inputs) {
+    // 已被新裁决取代的旧录入仅留审计，不再参与生效推导/歧义分组
+    if (row.superseded_at != null) continue;
     const s = normalize(row.source_raw);
     const t = normalize(row.target_raw);
     if (!s.ok || !t.ok) {

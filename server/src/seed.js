@@ -87,7 +87,11 @@ export async function seed() {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query('TRUNCATE migration_plan_items, migration_plans, verification_verdicts, crawl_results, url_mappings, mapping_inputs RESTART IDENTITY');
+    await client.query(
+      `TRUNCATE
+         migration_plan_items, migration_plans, verification_verdicts, crawl_results,
+         url_mappings, mapping_inputs, import_rows, import_audit_log, import_batches
+       RESTART IDENTITY CASCADE`);
 
     for (const row of INPUTS) {
       const s = normalize(row.source_raw);

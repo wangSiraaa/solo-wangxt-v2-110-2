@@ -51,6 +51,7 @@ export async function runVerification({ onlyKey = null } = {}) {
       await saveVerdict({
         sourceNorm: m.source_norm, sourceRaw: m.source_raw,
         verdict: 'ambiguity', issues, final: {}, hops: 0, tracker: null,
+        mappingVersion: m.version,
       });
       results.push({ source_norm: m.source_norm, verdict: 'ambiguity', issues });
       continue;
@@ -78,27 +79,29 @@ export async function runVerification({ onlyKey = null } = {}) {
       },
       hops: crawl.hops.length,
       tracker,
+      mappingVersion: m.version,
     });
     results.push({ source_norm: m.source_norm, verdict, issues, hops: crawl.hops.length });
   }
   return { count: results.length, results, label: VERDICT_LABEL };
 }
 
-async function saveVerdict({ sourceNorm, sourceRaw, verdict, issues, final, hops, tracker }) {
+async function saveVerdict({ sourceNorm, sourceRaw, verdict, issues, final, hops, tracker, mappingVersion }) {
   await pool.query(
     `INSERT INTO verification_verdicts
        (source_norm, source_raw, final_url_raw, final_url_norm, final_status,
-        hops, tracker_preserved, verdict, issues, verified_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now())
+        hops, tracker_preserved, verdict, issues, verified_at, stale, mapping_version)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now(), false, $10)
      ON CONFLICT (source_norm) DO UPDATE SET
        source_raw=EXCLUDED.source_raw, final_url_raw=EXCLUDED.final_url_raw,
        final_url_norm=EXCLUDED.final_url_norm, final_status=EXCLUDED.final_status,
        hops=EXCLUDED.hops, tracker_preserved=EXCLUDED.tracker_preserved,
-       verdict=EXCLUDED.verdict, issues=EXCLUDED.issues, verified_at=now()`,
+       verdict=EXCLUDED.verdict, issues=EXCLUDED.issues, verified_at=now(),
+       stale=false, mapping_version=EXCLUDED.mapping_version`,
     [sourceNorm, sourceRaw, final.raw ?? null, final.norm ?? null, final.status ?? null,
      hops,
      tracker ? tracker.ok : null,
-     verdict, JSON.stringify(issues)],
+     verdict, JSON.stringify(issues), mappingVersion ?? null],
   );
 }
 

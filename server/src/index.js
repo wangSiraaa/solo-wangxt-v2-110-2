@@ -20,7 +20,10 @@ async function main() {
   const fixture = await startFixture();
   await ensureDatabase();
 
-  const app = Fastify({ logger: { name: 'workbench', level: 'info' } });
+  const app = Fastify({
+    logger: { name: 'workbench', level: 'info' },
+    bodyLimit: 6 * 1024 * 1024, // 批量导入文件上限 5MiB（见 routes.js），留 1MiB 开销
+  });
   await app.register(apiRoutes);
   const dist = join(__dirname, '..', '..', 'web', 'dist');
   if (existsSync(dist)) {

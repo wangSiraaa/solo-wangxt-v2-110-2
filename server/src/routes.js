@@ -1,11 +1,30 @@
-/** REST API：映射录入、规范化试算、验证、迁移方案与发布闸门。 */
+/** REST API：映射录入、规范化试算、验证、迁移方案与发布闸门、本地文件批量导入。 */
 import { pool } from './db.js';
 import { normalize, carryTrackers, splitQuery } from './normalize.js';
 import { recomputeMappings } from './mappings-service.js';
 import { runVerification, VERDICT_LABEL } from './verify-runner.js';
 import { config } from './config.js';
+import {
+  stageImport, getImport, listImports, updateRowSelection,
+  commitImport, abandonImport, BatchFormatError,
+} from './import-service.js';
+
+/** 上传文件大小上限：迁移栏目映射是小文本，5MiB 足够且防止滥用 */
+const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
+const RAW_TYPES = ['text/csv', 'application/import+json', 'application/octet-stream'];
 
 export default async function api(app) {
+  // 批量导入必须拿到原始字节（哈希、原始行留证都依赖字节一致性），
+  // 因此这些类型按 Buffer 接收，绝不走 application/json 的对象解析。
+  // parseAs:'buffer' 时 Fastify 已把 body 聚合成 Buffer 交给解析器。
+  const rawParser = (_req, payload, done) => {
+    if (payload.length > MAX_IMPORT_BYTES) {
+      return done(Object.assign(new Error('导入文件超过 5MiB 上限'), { statusCode: 413 }));
+    }
+    done(null, payload);
+  };
+  for (const t of RAW_TYPES) app.addContentTypeParser(t, { parseAs: 'buffer' }, rawParser);
+
   app.get('/api/health', async () => ({ ok: true, fixture: `127.0.0.1:${config.fixture.port}` }));
 
   app.get('/api/rules', async () => config.rules);
@@ -34,22 +53,40 @@ export default async function api(app) {
   app.get('/api/mappings', async () => {
     const { rows: inputs } = await pool.query(
       `SELECT i.*, v.verdict, v.issues, v.final_status, v.final_url_raw, v.hops,
-              v.tracker_preserved, v.verified_at
+              v.tracker_preserved, v.verified_at, v.stale, v.mapping_version
          FROM mapping_inputs i
          LEFT JOIN verification_verdicts v ON v.source_norm = i.source_norm
         ORDER BY i.id`);
     const { rows: mappings } = await pool.query('SELECT * FROM url_mappings ORDER BY id');
     const { rows: ambiguities } = await pool.query('SELECT * FROM mapping_ambiguities ORDER BY source_norm');
-    return { inputs, mappings, ambiguities, verdictLabel: VERDICT_LABEL };
+    return {
+      inputs, mappings, ambiguities, verdictLabel: VERDICT_LABEL,
+      // 仅统计生效证据（被取代的录入不参与“有效”计数）
+      activeInputCount: inputs.filter((i) => i.superseded_at == null).length,
+    };
   });
 
-  // 录入一条原始映射：只进 mapping_inputs；随后重算 url_mappings 状态
+  // 录入一条原始映射：只进 mapping_inputs；随后重算 url_mappings 状态。
+  // 与批量导入同一纪律：URL 必须落在随项目启动的本地迁移范围（防 SSRF/外站混入）。
   app.post('/api/mappings', async (req, reply) => {
     const { source_raw, target_raw, mapping_type = 'manual', note } = req.body ?? {};
     const s = normalize(String(source_raw ?? ''));
     const t = normalize(String(target_raw ?? ''));
     if (!s.ok) return reply.code(400).send({ error: `source: ${s.error}` });
     if (!t.ok) return reply.code(400).send({ error: `target: ${t.error}` });
+    const inScope = (n) =>
+      n.host === config.fixture.host && n.port === String(config.fixture.port);
+    if (!inScope(s) || !inScope(t)) {
+      return reply.code(400).send({
+        error: `URL 不在允许的本地迁移范围 127.0.0.1:${config.fixture.port}`,
+      });
+    }
+    if (!['manual', 'deleted'].includes(mapping_type)) {
+      return reply.code(400).send({ error: `非法类型: ${mapping_type}` });
+    }
+    if (mapping_type === 'deleted' && s.normKey !== t.normKey) {
+      return reply.code(400).send({ error: 'deleted 类型的目标必须与旧址同一资源' });
+    }
 
     const client = await pool.connect();
     try {
@@ -80,6 +117,61 @@ export default async function api(app) {
       'SELECT * FROM crawl_results WHERE source_norm=$1 ORDER BY hop_index', [key]);
     if (!rows.length) return reply.code(404).send({ error: 'no crawl evidence; run verification first' });
     return rows;
+  });
+
+  // ---- 本地文件批量导入 -------------------------------------------------
+  // 只接收浏览器从本地磁盘读取的文件字节（multipart/URL 远程拉取一律不提供）。
+  app.get('/api/imports', async () => ({ batches: await listImports() }));
+
+  app.get('/api/imports/:id', async (req, reply) => {
+    const data = await getImport(Number(req.params.id));
+    if (!data) return reply.code(404).send({ error: 'import batch not found' });
+    return data;
+  });
+
+  // POST /api/imports?format=csv|json  body=文件原始字节
+  // 元信息走显式头：X-Import-Filename、X-Import-Actor（不收 multipart，避免框架改写字节）
+  app.post('/api/imports', async (req, reply) => {
+    const fileFormat = req.query?.format;
+    const filename = String(req.headers['x-import-filename'] ?? '').slice(0, 255) || null;
+    const actor = String(req.headers['x-import-actor'] ?? '').slice(0, 100) || null;
+    const bytes = Buffer.isBuffer(req.body)
+      ? req.body
+      : Buffer.from(typeof req.body === 'string' ? req.body : '');
+    try {
+      const result = await stageImport({ bytes, fileFormat, filename, actor });
+      const data = await getImport(result.batch.id);
+      return reply.code(result.idempotent ? 200 : 201)
+        .send({ ...data, idempotent: result.idempotent });
+    } catch (e) {
+      if (e instanceof BatchFormatError) return reply.code(400).send({ error: e.message });
+      throw e;
+    }
+  });
+
+  // 操作者选择：selected / ignored / pending
+  app.post('/api/imports/:id/rows/:rowId/selection', async (req, reply) => {
+    const selection = String(req.body?.selection ?? '');
+    const actor = String(req.headers['x-import-actor'] ?? '').slice(0, 100) || null;
+    const r = await updateRowSelection(
+      Number(req.params.id), Number(req.params.rowId), selection, actor);
+    if (r.error) return reply.code(r.error).send({ error: r.message });
+    return r;
+  });
+
+  // 原子提交所选行（冲突必须已显式裁决、批次不得含错误行）
+  app.post('/api/imports/:id/commit', async (req, reply) => {
+    const actor = String(req.headers['x-import-actor'] ?? '').slice(0, 100) || null;
+    const r = await commitImport(Number(req.params.id), { actor });
+    if (r.rejected) return reply.code(r.status).send(r);
+    return r;
+  });
+
+  app.post('/api/imports/:id/abandon', async (req, reply) => {
+    const actor = String(req.headers['x-import-actor'] ?? '').slice(0, 100) || null;
+    const r = await abandonImport(Number(req.params.id), actor);
+    if (r.error) return reply.code(r.error).send({ error: r.message });
+    return r;
   });
 
   // ---- 迁移方案 -------------------------------------------------------
@@ -127,12 +219,17 @@ export default async function api(app) {
 
       const { rows: ms } = await client.query(
         `SELECT m.*, v.verdict, v.issues, v.final_status, v.final_url_raw,
-                v.final_url_norm, v.hops, v.tracker_preserved
+                v.final_url_norm, v.hops, v.tracker_preserved,
+                v.stale AS evidence_stale, v.mapping_version AS evidence_version
            FROM url_mappings m
            LEFT JOIN verification_verdicts v ON v.source_norm=m.source_norm
           WHERE m.status='active' ORDER BY m.id`);
       for (const m of ms) {
-        const good = m.verdict === 'ok' || m.verdict === 'deleted_gone_ok';
+        // 证据必须新鲜：裁决通过、未被标过期、且取自当前映射版本
+        const evidenceFresh =
+          (m.verdict === 'ok' || m.verdict === 'deleted_gone_ok') &&
+          m.evidence_stale === false &&
+          m.evidence_version === m.version;
         // 计划中的最终跳转 URL：携带追踪参数的示例（取首次输入的参数）
         const { rows: ins } = await client.query(
           'SELECT source_raw FROM mapping_inputs WHERE source_norm=$1 ORDER BY id LIMIT 1',
@@ -140,19 +237,28 @@ export default async function api(app) {
         const proposed = m.mapping_type === 'deleted'
           ? null
           : carryTrackers(ins[0].source_raw, m.target_raw);
+        const issues = [
+          ...(m.issues ?? []),
+          ...(m.evidence_stale || (m.evidence_version !== undefined && m.evidence_version !== m.version)
+            ? ['映射已变更，旧验证证据已过期，必须重新验证']
+            : []),
+        ];
         await client.query(
           `INSERT INTO migration_plan_items (plan_id, mapping_id, item_status, evidence)
            VALUES ($1,$2,$3,$4)`,
           [planId, m.id,
-           good ? 'verified' : m.verdict ? 'blocked' : 'pending',
+           evidenceFresh ? 'verified' : m.verdict ? 'blocked' : 'pending',
            JSON.stringify({
              verdict: m.verdict ?? null,
-             issues: m.issues ?? [],
+             issues,
              final_status: m.final_status ?? null,
              final_url: m.final_url_raw ?? null,
              hops: m.hops ?? 0,
              tracker_preserved: m.tracker_preserved ?? null,
              proposed_redirect_url: proposed,
+             stale: m.evidence_stale ?? null,
+             mapping_version: m.version,
+             evidence_version: m.evidence_version ?? null,
            })]);
       }
       await client.query('COMMIT');
@@ -217,6 +323,17 @@ export default async function api(app) {
 
     const { rows: conflicts } = await pool.query('SELECT source_raw FROM url_mappings WHERE status=$1', ['conflicted']);
     conflicts.forEach((m) => blockers.push({ source: m.source_raw, reason: '归一化歧义未裁决' }));
+
+    // 过期证据：映射在取证后被改动（批量提交/改目标），旧裁决不允许用于发布
+    const { rows: stale } = await pool.query(
+      `SELECT m.source_raw, m.version, v.verified_at
+         FROM url_mappings m
+         JOIN verification_verdicts v ON v.source_norm = m.source_norm
+        WHERE m.status='active' AND (v.stale OR v.mapping_version IS DISTINCT FROM m.version)`);
+    stale.forEach((m) => blockers.push({
+      source: m.source_raw,
+      reason: `验证证据已过期（映射版本 ${m.version}），请重新验证后再发布`,
+    }));
 
     if (blockers.length) {
       return reply.code(409).send({ published: false, blockers });

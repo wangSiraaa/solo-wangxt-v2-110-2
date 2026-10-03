@@ -17,6 +17,7 @@
     <div class="kpi" style="margin-top:12px">
       <div class="card"><div class="num" style="color:var(--ok)">{{ counts.ok }}</div><div class="lbl">通过（含已删除正确消亡）</div></div>
       <div class="card"><div class="num" style="color:var(--warn)">{{ counts.ambiguity }}</div><div class="lbl">归一化歧义</div></div>
+      <div class="card"><div class="num" style="color:var(--bad)">{{ counts.stale }}</div><div class="lbl">证据已过期（需重新验证）</div></div>
       <div class="card"><div class="num" style="color:var(--bad)">{{ counts.loop + counts.long + counts.badStatus + counts.fetch }}</div><div class="lbl">环/长链/最终页异常/越权</div></div>
       <div class="card"><div class="num">{{ counts.unverified }}</div><div class="lbl">从未验证（仅填表）</div></div>
     </div>
@@ -28,7 +29,7 @@
       <thead>
         <tr>
           <th>裁决</th><th>旧址（原始录入）</th><th>最终 URL</th><th>最终状态</th>
-          <th>跳数</th><th>追踪参数</th><th>问题 / 证据</th>
+          <th>跳数</th><th>证据版本</th><th>追踪参数</th><th>问题 / 证据</th>
         </tr>
       </thead>
       <tbody>
@@ -38,6 +39,13 @@
           <td class="mono">{{ row.final_url_raw || '—' }}</td>
           <td>{{ row.final_status ?? '—' }}</td>
           <td>{{ row.hops ?? '—' }}</td>
+          <td>
+            <span v-if="row.verdict" class="small" :title="`证据取自 v${row.mapping_version ?? '?'}，当前映射 v${row.current_version ?? '?'}`">
+              <span v-if="row.stale" class="badge bad">过期 {{ row.mapping_version ?? '?' }}→{{ row.current_version ?? '?' }}</span>
+              <span v-else class="badge ok">新鲜 v{{ row.current_version ?? '?' }}</span>
+            </span>
+            <span v-else class="badge neutral">—</span>
+          </td>
           <td>
             <span v-if="row.tracker_preserved === true" class="badge ok">已保留</span>
             <span v-else-if="row.tracker_preserved === false" class="badge bad">丢失</span>
@@ -87,9 +95,10 @@ const hops = ref([]);
 const hopsKey = ref('');
 
 const counts = computed(() => {
-  const c = { ok: 0, ambiguity: 0, loop: 0, long: 0, badStatus: 0, fetch: 0, unverified: 0 };
+  const c = { ok: 0, ambiguity: 0, stale: 0, loop: 0, long: 0, badStatus: 0, fetch: 0, unverified: 0 };
   for (const r of rows.value) {
     if (!r.verdict) c.unverified++;
+    else if (r.stale) c.stale++;
     else if (r.verdict === 'ok' || r.verdict === 'deleted_gone_ok') c.ok++;
     else if (r.verdict === 'ambiguity') c.ambiguity++;
     else if (r.verdict === 'redirect_loop') c.loop++;
@@ -103,10 +112,19 @@ const counts = computed(() => {
 async function load() {
   const d = await api.mappings();
   label.value = d.verdictLabel;
-  // 输入材料去重为每个归一化键一行展示
+  const versionByKey = new Map(d.mappings.map((m) => [m.source_norm, Number(m.version)]));
+  // 输入材料去重为每个归一化键一行展示；补上映射当前版本号用于证据新旧判断
   const byKey = new Map();
   for (const i of d.inputs) {
-    if (!byKey.has(i.source_norm)) byKey.set(i.source_norm, i);
+    if (!byKey.has(i.source_norm)) {
+      byKey.set(i.source_norm, { ...i, current_version: versionByKey.get(i.source_norm) ?? null });
+    }
+  }
+  // stale 以“证据版本落后于当前映射版本”或后端 stale 标记为准
+  for (const row of byKey.values()) {
+    if (row.verdict && row.current_version != null && Number(row.mapping_version) !== row.current_version) {
+      row.stale = true;
+    }
   }
   rows.value = [...byKey.values()];
 }

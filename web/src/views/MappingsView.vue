@@ -70,7 +70,8 @@
           <td class="mono">{{ i.target_raw }}</td>
           <td>{{ i.mapping_type === 'deleted' ? '已删除' : '迁移' }}</td>
           <td>
-            <span v-if="mappingStatus(i.source_norm) === 'conflicted'" class="badge warn">歧义</span>
+            <span v-if="i.superseded_at" class="badge neutral" :title="'被批次 #' + i.superseded_by_batch + ' 的新裁决取代，仅留审计'">已取代</span>
+            <span v-else-if="mappingStatus(i.source_norm) === 'conflicted'" class="badge warn">歧义</span>
             <span v-else class="badge ok">生效</span>
           </td>
           <td class="small muted">{{ i.note }}</td>

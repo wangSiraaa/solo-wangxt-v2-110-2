@@ -36,7 +36,7 @@ npm run pg:start        # 启动 tools/ 下的本地 PostgreSQL（127.0.0.1:5543
 npm run migrate         # 建库 + 建表
 npm run seed            # 写入 10 条演示录入（含全部异常场景）
 
-npm test                # 19 项测试：规范化规则 + 验证器集成（真实启动本地站点）
+npm test                # 36 项测试：规范化、验证器集成、导入解析字节保真与暂存/提交/冲突/过期
 npm run verify          # CLI：对全部映射真实请求验证并给出裁决
 node scripts/report.js  # 产出 docs/verification-report-before.md 风格的证据报告
 
@@ -89,10 +89,50 @@ blocked/pending、未纳入的生效映射或未裁决歧义，就返回 **409 +
 | 方法/路径 | 作用 |
 |---|---|
 | `POST /api/normalize` | 规范化试算（不写库） |
-| `GET/POST /api/mappings` | 原始录入材料 / 录入一条（自动重算生效与冲突） |
-| `POST /api/verify` | 对全部（或指定 `source_norm`）真实验证 |
+| `GET/POST /api/mappings` | 原始录入材料 / 录入一条（自动重算生效与冲突；强制本地范围） |
+| `POST /api/imports?format=csv\|json` | **上传本地文件字节到暂存区**（幂等：sha256 相同返回原批次） |
+| `GET /api/imports` / `GET /api/imports/:id` | 批次列表 / 批次+原始行+选择+审计（刷新可追溯） |
+| `POST /api/imports/:id/rows/:rowId/selection` | 操作者选择：`selected` / `ignored` / `pending`（冲突显式裁决） |
+| `POST /api/imports/:id/commit` | **原子提交所选行**；错误行/未裁决冲突 → 409 且零写入 |
+| `POST /api/imports/:id/abandon` | 放弃暂存批次（留痕，不可再提交） |
+| `POST /api/verify` | 对全部（或指定 `source_norm`）真实验证；证据绑定映射版本 |
 | `GET /api/crawl/:key` | 查看某条链接的逐跳证据 |
-| `GET/POST /api/plans`、`POST /api/plans/:id/build`、`POST /api/plans/:id/publish` | 方案与发布闸门 |
+| `GET/POST /api/plans`、`POST /api/plans/:id/build`、`POST /api/plans/:id/publish` | 方案与发布闸门（过期证据阻断发布） |
+
+## 本地文件批量导入工作流
+
+只接收浏览器在本机读取的**文件字节**（`POST` body 原样字节，不收 URL、不读服务端路径、
+不走 multipart 重编码），纪律与手工录入一致：
+
+1. **逐字节留证**：原始行写入 `import_rows.raw_line`（只去行终止符/BOM），
+   百分号编码不 decode、尾斜杠保留、utm 等追踪参数不删不改；
+   WHATWG 规范化只生成预览列（`source_norm`/`target_norm`），绝不回写原始列。
+2. **批次元数据**：`import_batches` 保存格式版本（v1）、文件格式、文件名、
+   **内容摘要 sha256**、字节数、内容摘要 JSON、操作者、时间戳。
+3. **暂存预览 + 冲突显式化**：文件内或与当前库同 canonical key 不同目标，
+   行级标记 `within_file` / `with_library` / `both`，列出全部候选目标，**系统不挑赢家**。
+4. **原子提交**：任一行格式损坏（坏编码/未知动作/越界/版本不支持）或冲突未显式裁决，
+   整批 409 回滚，逐行列出 `error_code` 与原始行，未提交数据绝不触碰当前生效映射。
+5. **幂等**：同一内容摘要（sha256，文件名可不同）重传返回同一批次，不新增任何行/映射。
+6. **版本与证据过期**：生效映射带单调 `version`；目标/状态每实质变更 +1，
+   旧 `verification_verdicts` 立即置 `stale`、方案条目降为 blocked、发布闸门要求重新验证；
+   被裁决取代的旧目标录入标 `superseded_at`（留证据但不再参与推导）。
+7. **审计**：暂存/每次选择/提交/拒绝/放弃写 `import_audit_log`，刷新后可追溯
+   批次、原始行、操作者选择与提交版本（`committed_mapping_id` 血缘）。
+
+文件格式（v1）：
+
+```csv
+source_raw,target_raw,action,note
+http://127.0.0.1:4568/%E9%A2%91%E9%81%93/42.html?utm_source=w,http://127.0.0.1:4568/articles/tech/42,migrate,中文+utm
+http://127.0.0.1:4568/column/weekly/,http://127.0.0.1:4568/sections/weekly,migrate,尾斜杠保留
+http://127.0.0.1:4568/forum/old/9,http://127.0.0.1:4568/forum/old/9,delete,已删除（目标必须同址，期望 410/404）
+```
+```json
+{ "format_version": "v1", "rows": [
+  { "source_raw": "http://127.0.0.1:4568/a", "target_raw": "http://127.0.0.1:4568/b",
+    "action": "migrate", "note": "...", "version": "v1" } ] }
+```
 
 ## 环境变量（见 `.env.example`）
 
@@ -120,11 +160,14 @@ cd /workspace && npm run pg:start
 
 ```
 server/src/   normalize.js(规范化规则) verifier.js(白名单/环/长链/最终状态)
-              ambiguity.js mappings-service.js verify-runner.js
+              ambiguity.js mappings-service.js(diff 重算/版本/证据过期/supersede)
+              verify-runner.js(证据绑定映射版本)
+              import-parser.js(CSV/JSON 字节保真解析+逐行错误)
+              import-service.js(暂存/幂等/冲突裁决/原子提交/审计)
               fixture.js(随项目本地站点) routes.js(Fastify) db.js
-server/sql/   schema.sql
-web/          Vue 3 + Vite 工作台（总览/证据/方案闸门/规则四页）
+server/sql/   schema.sql(导入批次/行/审计 + url_mappings.version + verdicts.stale)
+web/          Vue 3 + Vite 工作台（总览/证据/批量导入裁决/方案闸门/规则）
 scripts/      start-pg.js remediate.js report.js
 docs/         verification-report-before.md / -after.md（真实跑出来的证据）
-server/test/  规则单测 + 验证器集成测试（19 项）
+server/test/  规则 + 验证器集成(19) + 导入解析字节保真(10) + 导入工作流集成(7)
 ```

@@ -63,7 +63,9 @@
           <td class="mono">{{ it.source_raw }}</td>
           <td class="mono">{{ it.evidence?.proposed_redirect_url || '（已删除，返回 410/404）' }}</td>
           <td class="small">
-            <div>最终状态：{{ it.evidence?.final_status ?? '—' }}；跳数：{{ it.evidence?.hops ?? '—' }}</div>
+            <div>最终状态：{{ it.evidence?.final_status ?? '—' }}；跳数：{{ it.evidence?.hops ?? '—' }}
+              <span v-if="it.evidence?.stale" class="badge bad" style="margin-left:6px">证据过期 v{{ it.evidence?.evidence_version }}→v{{ it.evidence?.mapping_version }}</span>
+            </div>
             <ul v-if="it.evidence?.issues?.length" class="issues">
               <li v-for="(x, k) in it.evidence.issues" :key="k">{{ x }}</li>
             </ul>
