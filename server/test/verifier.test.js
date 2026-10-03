@@ -1,3 +1,4 @@
+import './use-test-env-verifier.js';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startFixture } from '../src/fixture.js';

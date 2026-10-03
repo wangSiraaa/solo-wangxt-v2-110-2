@@ -63,17 +63,23 @@
     <table>
       <thead><tr><th>#</th><th>原始旧址</th><th>归一化键</th><th>新址</th><th>类型</th><th>状态</th><th>备注</th></tr></thead>
       <tbody>
-        <tr v-for="i in inputs" :key="i.id">
+        <tr v-for="i in inputs" :key="i.id" :class="{ excludedRow: i.excluded }">
           <td>{{ i.id }}</td>
           <td class="mono">{{ i.source_raw }}</td>
           <td class="mono">{{ i.source_norm }}</td>
           <td class="mono">{{ i.target_raw }}</td>
           <td>{{ i.mapping_type === 'deleted' ? '已删除' : '迁移' }}</td>
           <td>
-            <span v-if="mappingStatus(i.source_norm) === 'conflicted'" class="badge warn">歧义</span>
+            <span v-if="i.excluded" class="badge neutral">已裁决判负</span>
+            <span v-else-if="mappingStatus(i.source_norm) === 'conflicted'" class="badge warn">歧义</span>
             <span v-else class="badge ok">生效</span>
+            <span v-if="i.verdict_stale" class="badge warn" style="margin-left:4px">证据过期</span>
           </td>
-          <td class="small muted">{{ i.note }}</td>
+          <td class="small muted">
+            {{ i.note }}
+            <div v-if="i.excluded_reason" class="small">（{{ i.excluded_reason }} · {{ i.excluded_by }}）</div>
+            <div v-if="i.import_batch_id" class="small">导入批次 #{{ i.import_batch_id }}</div>
+          </td>
         </tr>
       </tbody>
     </table>
@@ -123,3 +129,7 @@ async function trial() {
 watch(() => props.refreshKey, load);
 onMounted(load);
 </script>
+
+<style scoped>
+.excludedRow { opacity: 0.55; }
+</style>

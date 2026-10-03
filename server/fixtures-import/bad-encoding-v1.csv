@@ -1,0 +1,4 @@
+# url-migration-import v1
+source,target,action,note
+http://127.0.0.1:4568/imp/ok1,http://127.0.0.1:4568/articles/ok1,redirect,正常行
+http://127.0.0.1:4568/imp/��,http://127.0.0.1:4568/articles/x,redirect,坏编码行

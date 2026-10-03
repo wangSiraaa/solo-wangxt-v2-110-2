@@ -16,6 +16,7 @@
     "verify": "node server/src/verify-cli.js",
     "pg:start": "node scripts/start-pg.js",
     "pg:stop": "node scripts/start-pg.js stop",
+    "pretest": "node scripts/prepare-test-db.js",
     "test": "node --test server/test/"
   },
   "dependencies": {

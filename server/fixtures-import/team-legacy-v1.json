@@ -1,0 +1,6 @@
+{
+  "format_version": 1,
+  "rows": [
+    {"source": "http://127.0.0.1:4568/imp/json/1?utm_source=x", "target": "http://127.0.0.1:4568/articles/json1", "action": "redirect", "note": "JSON 合法行"}
+  ]
+}

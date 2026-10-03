@@ -18,6 +18,7 @@
       <div class="card"><div class="num" style="color:var(--ok)">{{ counts.ok }}</div><div class="lbl">通过（含已删除正确消亡）</div></div>
       <div class="card"><div class="num" style="color:var(--warn)">{{ counts.ambiguity }}</div><div class="lbl">归一化歧义</div></div>
       <div class="card"><div class="num" style="color:var(--bad)">{{ counts.loop + counts.long + counts.badStatus + counts.fetch }}</div><div class="lbl">环/长链/最终页异常/越权</div></div>
+      <div class="card"><div class="num" style="color:var(--warn)">{{ counts.stale }}</div><div class="lbl">证据已过期（映射改动后需重验）</div></div>
       <div class="card"><div class="num">{{ counts.unverified }}</div><div class="lbl">从未验证（仅填表）</div></div>
     </div>
   </div>
@@ -33,7 +34,10 @@
       </thead>
       <tbody>
         <tr v-for="row in rows" :key="row.id">
-          <td><VerdictBadge :verdict="row.verdict" :label="label" /></td>
+          <td>
+            <VerdictBadge :verdict="row.verdict" :label="label" />
+            <div v-if="row.verdict_stale" class="badge warn" style="margin-top:3px">证据过期·需重验</div>
+          </td>
           <td class="mono">{{ row.source_raw }}</td>
           <td class="mono">{{ row.final_url_raw || '—' }}</td>
           <td>{{ row.final_status ?? '—' }}</td>
@@ -87,8 +91,9 @@ const hops = ref([]);
 const hopsKey = ref('');
 
 const counts = computed(() => {
-  const c = { ok: 0, ambiguity: 0, loop: 0, long: 0, badStatus: 0, fetch: 0, unverified: 0 };
+  const c = { ok: 0, ambiguity: 0, loop: 0, long: 0, badStatus: 0, fetch: 0, unverified: 0, stale: 0 };
   for (const r of rows.value) {
+    if (r.verdict_stale) c.stale++;
     if (!r.verdict) c.unverified++;
     else if (r.verdict === 'ok' || r.verdict === 'deleted_gone_ok') c.ok++;
     else if (r.verdict === 'ambiguity') c.ambiguity++;

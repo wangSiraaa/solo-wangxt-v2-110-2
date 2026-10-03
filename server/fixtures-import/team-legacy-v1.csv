@@ -1,0 +1,4 @@
+# url-migration-import v1
+source,target,action,note
+http://127.0.0.1:4568/%E9%A2%91%E9%81%93/%E7%A7%91%E6%8A%80/42.html?utm_source=weibo&utm_campaign=autumn,http://127.0.0.1:4568/articles/tech/42,redirect,中文编码路径+utm 保留
+http://127.0.0.1:4568/dept/gone/7,,delete,已删除栏目，期望 410

@@ -12,6 +12,7 @@ import { normalize } from './normalize.js';
 export function analyzeInputs(inputs) {
   const groups = new Map();
   for (const row of inputs) {
+    if (row.excluded === true) continue; // 已人工判负的证据保留但不参与
     const s = normalize(row.source_raw);
     const t = normalize(row.target_raw);
     if (!s.ok || !t.ok) {

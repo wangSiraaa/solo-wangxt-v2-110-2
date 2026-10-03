@@ -1,0 +1,4 @@
+# url-migration-import v1
+source,target,action,note
+http://127.0.0.1:4568/imp/dup-key,http://127.0.0.1:4568/articles/aaa,redirect,同键目标 A
+http://127.0.0.1:4568/imp/dup-key,http://127.0.0.1:4568/articles/bbb,redirect,同键目标 B

@@ -15,6 +15,18 @@ export const config = {
     host: process.env.FIXTURE_HOST ?? '127.0.0.1',
     port: num(process.env.FIXTURE_PORT, 4568),
   },
+  /**
+   * 批量导入允许的迁移目标范围（白名单）。
+   * 只有指向这些 origin 的行才允许进入暂存/提交；外部域整行拒绝。
+   * 默认即随项目启动的本地站点，可用 IMPORT_ALLOWED_ORIGINS 追加（逗号分隔）。
+   */
+  import: {
+    // 目前只支持格式版本 1；文件内版本号不匹配时整批拒绝（unsupported_version）。
+    supportedVersion: 1,
+    maxBytes: num(process.env.IMPORT_MAX_BYTES, 5 * 1024 * 1024),
+    allowedOrigins: (process.env.IMPORT_ALLOWED_ORIGINS ?? '')
+      .split(',').map((s) => s.trim()).filter(Boolean),
+  },
   db: {
     host: process.env.PGHOST ?? '127.0.0.1',
     port: num(process.env.PGPORT, 55432),

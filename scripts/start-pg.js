@@ -11,12 +11,22 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const PG = join(ROOT, 'tools', 'pg-debs', 'pg', 'usr', 'lib', 'postgresql', '15');
+const PG_CLIENT = join(ROOT, 'tools', 'pg-debs', 'pg-client', 'usr', 'lib', 'postgresql', '15');
 const BIN = join(PG, 'bin');
+const CLIENT_BIN = existsSync(join(PG_CLIENT, 'bin', 'pg_isready'))
+  ? join(PG_CLIENT, 'bin')
+  : BIN;
 const PGDATA = join(ROOT, 'tools', 'pgdata');
 const SOCK = '/tmp/pgsock';
 const PORT = process.env.PGPORT ?? '55432';
 const LOG = join(ROOT, 'tools', 'pg.log');
-const env = { ...process.env, LD_LIBRARY_PATH: `${join(PG, 'lib')}:${process.env.LD_LIBRARY_PATH ?? ''}` };
+const libDirs = [
+  join(PG, 'lib'),
+  join(ROOT, 'tools', 'pg-debs', 'pg', 'usr', 'lib', 'aarch64-linux-gnu'),
+  join(ROOT, 'tools', 'pg-debs', 'pg-client', 'usr', 'lib', 'aarch64-linux-gnu'),
+  process.env.LD_LIBRARY_PATH ?? '',
+].filter(Boolean);
+const env = { ...process.env, LD_LIBRARY_PATH: libDirs.join(':') };
 
 function run(cmd, args) {
   const r = spawnSync(cmd, args, { env, stdio: 'inherit' });
@@ -51,7 +61,7 @@ child.unref();
 // 等待就绪
 const deadline = Date.now() + 15000;
 const ready = () => {
-  const r = spawnSync(join(BIN, 'pg_isready'), ['-h', '127.0.0.1', '-p', PORT], { env });
+  const r = spawnSync(join(CLIENT_BIN, 'pg_isready'), ['-h', '127.0.0.1', '-p', PORT], { env });
   return r.status === 0;
 };
 const tick = setInterval(() => {

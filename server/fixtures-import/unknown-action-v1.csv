@@ -1,0 +1,3 @@
+# url-migration-import v1
+source,target,action,note
+http://127.0.0.1:4568/imp/u1,http://127.0.0.1:4568/articles/u1,rewrite,未知动作

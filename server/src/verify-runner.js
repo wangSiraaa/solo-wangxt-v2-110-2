@@ -2,10 +2,14 @@
  * 验证流水线：对每条生效映射真实请求本地站点，
  * 保存每一跳证据（crawl_results）与最终裁决（verification_verdicts）。
  * 冲突键不请求，直接判 ambiguity —— 连请求都不应该开始。
+ *
+ * 证据代次：裁决落库时记录映射 revision 并清 stale；映射随后被改动（revision+1）
+ * 会让旧裁决变 stale，发布闸门据此要求重新验证。
  */
 import { pool } from './db.js';
 import { normalize } from './normalize.js';
 import { judge } from './verifier.js';
+import { syncPlanEvidence } from './mappings-service.js';
 
 const VERDICT_LABEL = {
   ok: '通过',
@@ -51,6 +55,11 @@ export async function runVerification({ onlyKey = null } = {}) {
       await saveVerdict({
         sourceNorm: m.source_norm, sourceRaw: m.source_raw,
         verdict: 'ambiguity', issues, final: {}, hops: 0, tracker: null,
+        revision: m.revision,
+      });
+      await syncPlanEvidence(pool, {
+        sourceNorm: m.source_norm, verdict: 'ambiguity', issues,
+        revision: m.revision, stale: false,
       });
       results.push({ source_norm: m.source_norm, verdict: 'ambiguity', issues });
       continue;
@@ -78,27 +87,36 @@ export async function runVerification({ onlyKey = null } = {}) {
       },
       hops: crawl.hops.length,
       tracker,
+      revision: m.revision,
+    });
+    await syncPlanEvidence(pool, {
+      sourceNorm: m.source_norm, verdict, issues,
+      finalStatus: crawl.finalStatus, finalUrlRaw: crawl.finalRaw,
+      hops: crawl.hops.length, tracker,
+      revision: m.revision, stale: false,
     });
     results.push({ source_norm: m.source_norm, verdict, issues, hops: crawl.hops.length });
   }
   return { count: results.length, results, label: VERDICT_LABEL };
 }
 
-async function saveVerdict({ sourceNorm, sourceRaw, verdict, issues, final, hops, tracker }) {
+async function saveVerdict({ sourceNorm, sourceRaw, verdict, issues, final, hops, tracker, revision }) {
   await pool.query(
     `INSERT INTO verification_verdicts
        (source_norm, source_raw, final_url_raw, final_url_norm, final_status,
-        hops, tracker_preserved, verdict, issues, verified_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now())
+        hops, tracker_preserved, verdict, issues, mapping_revision, stale, verified_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,FALSE,now())
      ON CONFLICT (source_norm) DO UPDATE SET
        source_raw=EXCLUDED.source_raw, final_url_raw=EXCLUDED.final_url_raw,
        final_url_norm=EXCLUDED.final_url_norm, final_status=EXCLUDED.final_status,
        hops=EXCLUDED.hops, tracker_preserved=EXCLUDED.tracker_preserved,
-       verdict=EXCLUDED.verdict, issues=EXCLUDED.issues, verified_at=now()`,
+       verdict=EXCLUDED.verdict, issues=EXCLUDED.issues,
+       mapping_revision=EXCLUDED.mapping_revision, stale=FALSE, verified_at=now()`,
     [sourceNorm, sourceRaw, final.raw ?? null, final.norm ?? null, final.status ?? null,
      hops,
      tracker ? tracker.ok : null,
-     verdict, JSON.stringify(issues)],
+     verdict, JSON.stringify(issues),
+     revision ?? null],
   );
 }
 

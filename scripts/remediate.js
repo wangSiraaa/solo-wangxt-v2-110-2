@@ -37,17 +37,21 @@ try {
   console.log(`剔除非白名单站点录入 ${r3.rowCount} 条`);
 
   const { total, conflicted } = await recomputeMappings(client);
+  void total; void conflicted;
 
   // 4) 环已在站点侧打断：修正映射目标为修复后的真实落点
+  //    （改 mapping_inputs 后重算，revision+1 会让旧验证证据过期）
   const loopKey = normalize(`${O}/loop/a`).normKey;
-  const loopTarget = normalize(`${O}/articles/tech/42`);
+  const loopTargetRaw = `${O}/articles/tech/42`;
+  const loopTarget = normalize(loopTargetRaw);
   await client.query(
-    `UPDATE url_mappings
+    `UPDATE mapping_inputs
         SET target_raw=$2, target_norm=$3, note='环已打断，直跳到科技文章'
-      WHERE source_norm=$1`,
-    [loopKey, `${O}/articles/tech/42`, loopTarget.normKey]);
-  console.log('环修复：/loop/a 的映射目标更新为修复后的真实落点');
-  console.log(`重算生效映射：${total} 条，冲突 ${conflicted} 条`);
+      WHERE source_norm=$1 AND excluded IS FALSE`,
+    [loopKey, loopTargetRaw, loopTarget.normKey]);
+  const recompute2 = await recomputeMappings(client);
+  console.log('环修复：/loop/a 的映射目标更新为修复后的真实落点（旧验证证据标记过期）');
+  console.log(`重算生效映射：${recompute2.total} 条，冲突 ${recompute2.conflicted} 条，过期证据 ${recompute2.staleVerdicts} 条`);
   await client.query('COMMIT');
 } catch (e) {
   await client.query('ROLLBACK');
